@@ -1,0 +1,42 @@
+{
+    "name": "omaresmael/thread",
+    "description": "Run Laravel closures on a pool of pre-booted ext-parallel threads",
+    "keywords": ["laravel", "concurrency", "parallel", "threads"],
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "laravel/framework": "^13.0",
+        "laravel/serializable-closure": "^2.0.10"
+    },
+    "require-dev": {
+        "orchestra/testbench": "*"
+    },
+    "suggest": {
+        "ext-parallel": "Required at use time (ZTS PHP only) to run tasks on threads."
+    },
+    "autoload": {
+        "psr-4": {
+            "Omaresmael\\Thread\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Omaresmael\\Thread\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Omaresmael\\Thread\\ThreadServiceProvider"
+            ],
+            "aliases": {
+                "Thread": "Omaresmael\\Thread\\Facades\\Thread"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

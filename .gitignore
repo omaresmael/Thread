@@ -1,0 +1,9 @@
+/vendor
+composer.lock
+.phpunit.cache
+tests/Fixtures/app/storage/logs/*.log
+tests/Fixtures/app/bootstrap/cache/*.php
+.superpowers/
+.context/
+.DS_Store
+.idea/
