@@ -1,0 +1,20 @@
+services:
+  zts:
+    image: omaresmael-thread:zts
+    build:
+      context: docker
+      args:
+        VARIANT: zts
+    volumes:
+      - .:/package
+    working_dir: /package
+
+  nts:
+    image: omaresmael-thread:nts
+    build:
+      context: docker
+      args:
+        VARIANT: cli
+    volumes:
+      - .:/package
+    working_dir: /package
