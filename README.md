@@ -1,42 +1,62 @@
 # omaresmael/thread
 
-Run Laravel closures in parallel on a pool of threads that boot your app **once**, with the same API as Laravel's `Concurrency` facade.
+A thread-based concurrency driver for Laravel. Tasks run on a pool of PHP threads that boot your app once, so they’re far faster than the process driver (at least 77× on 500 database tasks) and use a fraction of its memory, without forking your app.
 
-Laravel's `Concurrency::run()` (the process driver) starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), 500 tasks finish in **0.08 s** using **48 MB**, against **21.9 s** and **2.2 GB** with the process driver.
+Laravel process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), 500 database tasks finish in **0.18 s** using **65 MB**, against **16.5 s** and **1.9 GB** with the process driver.
 
-```php
-use Omaresmael\Thread\Facades\Thread;
+Why threads instead of processes:
 
-[$users, $orders] = Thread::run([
-    fn () => User::count(),
-    fn () => Order::count(),
-]);
-```
+- **Lighter.** A thread is not a whole new PHP process: there is no process to spawn and no PHP to start, and a booted worker adds about 1.5 MB, against roughly 30 MB for every process the process driver starts.
+- **Shares opcache.** All the threads live in one process, so they share its opcache: code PHP has compiled once is reused by every worker, which is why a worker boots in about 10 ms. Each process the process driver starts has its own opcache, so it compiles your app all over again.
 
-Every task runs in a fresh copy of the booted app, and shared state (open transactions, the logged-in user, the locale, log context, `once()` values…) is reset after it, so a task never sees what the previous one left behind.
 
 ## Installation
 
 Requirements:
 
-- **PHP 8.4 built thread-safe (ZTS)** with the **`parallel`** extension. Most PHP installs (FPM, Herd, distro packages) are not thread-safe. The official `php:8.4-zts` Docker image plus `pecl install parallel` works. PHP 8.3 is not supported.
+- **PHP 8.4 built thread-safe (ZTS)** with the **`parallel`** extension.
 - **Laravel 13.**
-- **`opcache.enable_cli=1`**, strongly recommended: threads share the compiled code, so a worker boots in about 10 ms and uses about 1.5 MB, against about 100 ms and 19 MB without it. Enable it for the processes that run threads, e.g. `php -d opcache.enable_cli=1 artisan queue:work`. If it is off, the package logs a warning once per process.
-- Linux is the tested platform.
+- **`opcache.enable_cli=1`**, Optional, But strongly recommended
 
 ```bash
 composer require omaresmael/thread
 ```
 
-The service provider and the `Thread` facade are auto-discovered. To publish the config file:
+To publish the config file:
 
 ```bash
 php artisan vendor:publish --tag=thread-config
 ```
 
-The package can be installed in an app that also runs on normal (non-thread-safe) PHP, such as an FPM web server sharing the codebase: nothing is checked when the app boots. Calling `Thread::run()`, `Thread::defer()` or `Thread::warm()` there throws a `ThreadUnavailableException` that says what is missing.
-
 ## Usage
+
+### Two ways to use it
+
+Through the package's `Thread` facade:
+
+```php
+use Omaresmael\Thread\Facades\Thread;
+
+Thread::run([
+    fn () => User::count(),
+    fn () => Order::count(),
+]);
+```
+
+Or as a driver of Laravel's `Concurrency` facade, so existing code switches to threads without changes. Make it the default in `.env`:
+
+```dotenv
+CONCURRENCY_DRIVER=thread
+```
+
+```php
+use Illuminate\Support\Facades\Concurrency;
+
+Concurrency::run([
+    fn () => User::count(),
+    fn () => Order::count(),
+]);
+```
 
 ### Running tasks
 
@@ -100,17 +120,13 @@ The pool keeps up to `max_workers` threads (4 by default); extra tasks wait in a
 Thread::run($tasks, concurrent: 8);
 ```
 
-Threads started beyond `max_workers` are closed when the call ends. For CPU-bound tasks use about the number of CPU cores; I/O-bound tasks can use more, limited by memory and your database's connection limit, since every worker holds its own connections.
+Threads started beyond `max_workers` are closed when the call ends.
 
-### Deferring and warming up
+### Deferring
 
+Run the tasks after the response is sent or the command finishes.
 ```php
-// Run the tasks after the response is sent or the command finishes.
 Thread::defer([fn () => Report::generate()]);
-
-// Start the workers up front, e.g. at the beginning of a queue worker.
-Thread::warm();
-Thread::warm(2);
 ```
 
 ### Configuration
@@ -121,18 +137,58 @@ Thread::warm(2);
 | `max_tasks` | `THREAD_MAX_TASKS` | `500` | Replace a worker after this many tasks (`null` to disable) |
 | `max_memory` | `THREAD_MAX_MEMORY` | `128` | Replace a worker when its memory exceeds this many MB (`null` to disable) |
 
-The settings are read once per process, when the pool starts.
+### Things to know
+
+- **Write tasks as you would for Laravel Octane.** Static properties and objects you mutate on shared singletons survive between tasks on the same worker. Set `max_tasks` to `1` if you need a fresh boot for every task.
+- **Threads share the process.** A crash of the PHP engine itself (a segfault) takes down your whole process. `putenv()` and `umask()` in a task affect the whole process.
+- `STDIN`, `STDOUT` and `STDERR` do not exist inside tasks, and what a task `echo`s is discarded.
+
+### Differences from the process driver
+
+Results and task exceptions are the same: keys, order and rebuilt exceptions match Laravel's process driver. What differs:
+
+| | Process driver | Threads |
+|---|---|---|
+| Tasks running at once | all of them, one process each | up to `max_workers` (4 by default); the rest wait in a queue. Raise it or use `concurrent:` |
+| Config and `.env` | every task boots fresh from your files | workers keep the config they booted with; file changes need a restart of the process |
+| A task that times out | throws `ProcessTimedOutException` | throws `TaskTimedOutException`; a task stuck in network I/O keeps running in the background until that I/O returns |
+| A task that crashes | a generic exception with the exit code | `WorkerCrashedException` with the real error message, also reported to your exception handler |
+| `defer()` | starts detached background processes | runs the tasks on the pool, in your process, after the response is sent or the command finishes |
 
 ## Benchmark
 
-![Thread::run() against Laravel's process driver at 10, 100 and 500 tasks](art/benchmark.gif)
+Laravel's process driver against the thread driver, called the same way (`Concurrency::driver('process')->run($tasks)` and `Concurrency::driver('thread')->run($tasks)`), at 10, 100 and 500 tasks. Times are the median of 5 runs, with the fastest and slowest run in brackets. "At least" divides the process driver's fastest run by the threads' slowest, so it holds even when the process driver is lucky; "typically" divides the medians.
 
-| Tasks | Process driver | `Thread::run()` | Faster | Process driver memory | `Thread::run()` memory | Less memory |
+### Database tasks
+
+Each task loads one customer's 500 orders from SQLite with the query builder.
+
+![The thread driver against Laravel's process driver on database tasks, at 10, 100 and 500 tasks](art/benchmark-sqlite.gif)
+
+| Tasks | Process driver | Thread driver | Faster | Process driver memory | Thread driver memory | Less memory |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10 | 430 ms | 25 ms | 17× | 318 MB | 47 MB | 7× |
-| 100 | 5.2 s | 32 ms | 161× | 1,932 MB | 48 MB | 40× |
-| 500 | 21.9 s | 82 ms | 269× | 2,174 MB | 48 MB | 45× |
+| 10 | 492 ms (461–663 ms) | 39 ms (37–41 ms) | at least 11× (typically 13×) | 337 MB | 57 MB | at least 5× (typically 6×) |
+| 100 | 3.8 s (3.7–4.2 s) | 77 ms (71–82 ms) | at least 45× (typically 49×) | 1,846 MB | 63 MB | at least 29× (typically 29×) |
+| 500 | 16.5 s (15.4–18.3 s) | 176 ms (164–201 ms) | at least 77× (typically 93×) | 1,864 MB | 65 MB | at least 26× (typically 29×) |
 
-How it was measured:
+### Small tasks
 
-- A Laravel 13 app on Linux, PHP 8.4 ZTS with `parallel` 1.2.15, 5 CPUs and 8 GB of memory in Docker.
+Each task returns `array_sum(range(1, 1000))`, so the numbers show the overhead each driver adds around your code.
+
+![The thread driver against Laravel's process driver on small tasks, at 10, 100 and 500 tasks](art/benchmark-small.gif)
+
+| Tasks | Process driver | Thread driver | Faster | Process driver memory | Thread driver memory | Less memory |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 436 ms (370–508 ms) | 23 ms (18–26 ms) | at least 14× (typically 19×) | 319 MB | 47 MB | at least 6× (typically 7×) |
+| 100 | 3.4 s (3.3–3.9 s) | 33 ms (33–35 ms) | at least 96× (typically 103×) | 1,575 MB | 47 MB | at least 32× (typically 34×) |
+| 500 | 15.4 s (14.2–16.3 s) | 82 ms (81–89 ms) | at least 159× (typically 187×) | 1,408 MB | 47 MB | at least 28× (typically 30×) |
+
+### How it was measured
+
+- A Laravel 13 app on Linux, PHP 8.4 ZTS with `parallel` 1.2.15, in Docker with 5 CPUs and the container capped at 6 GB of memory.
+- Time is one `run()` call in a fresh PHP process. For the thread driver that includes starting and booting its 4 workers; once they are running, the same calls take 3 ms, 34 ms and 113 ms (database tasks) and 2 ms, 13 ms and 61 ms (small tasks).
+- Both drivers use their defaults: the process driver starts every task as its own process at once, the thread driver runs 4 workers. The process driver ran with PHP's default `opcache.enable_cli=0`, which boots its child processes faster; the threads ran with it on, as recommended.
+- Memory is the peak combined memory (PSS) of every PHP process involved, sampled every 10 ms (the median is shown).
+- Each measurement had 1 warm-up round, which was discarded, and a 5 s pause before it. All 60 measured runs succeeded.
+
+To run it yourself, see [`benchmark/`](benchmark/README.md).
