@@ -1,0 +1,18 @@
+# Benchmark environment: Linux, PHP 8.4 ZTS with ext-parallel (the package's own test image).
+#   docker compose -f benchmark/docker-compose.yml run --rm bench sh setup.sh   # once: create the Laravel app, import the data
+#   docker compose -f benchmark/docker-compose.yml run --rm bench sh run.sh     # run the benchmark
+services:
+  bench:
+    image: omaresmael-thread:zts
+    build:
+      context: ../docker
+      args:
+        VARIANT: zts
+    # The process driver starts one PHP process per task: at 500 tasks it can need more memory than Docker
+    # has, and a run out of memory would take the whole Docker engine down. Capped, only this container runs
+    # out, and the benchmark records "out of memory" for that measurement. 6 GB leaves room for Docker itself.
+    mem_limit: 6g
+    memswap_limit: 6g
+    volumes:
+      - ..:/package
+    working_dir: /package/benchmark
