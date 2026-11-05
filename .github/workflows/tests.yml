@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  zts:
+    name: ZTS (PHP 8.4, ext-parallel)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the ZTS image
+        run: docker compose build zts
+
+      - name: Assert ZTS and ext-parallel
+        run: docker compose run --rm zts php -r 'if (! PHP_ZTS || ! extension_loaded("parallel") || ini_get("opcache.enable_cli") !== "1") { fwrite(STDERR, "Need ZTS PHP with ext-parallel and opcache.enable_cli=1.\n"); exit(1); } echo PHP_VERSION, " ZTS, parallel ", phpversion("parallel"), "\n";'
+
+      - name: Install dependencies
+        run: docker compose run --rm zts composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Run the full suite
+        run: docker compose run --rm zts vendor/bin/phpunit
+
+  nts:
+    name: NTS (PHP 8.4, no ext-parallel)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the NTS image
+        run: docker compose build nts
+
+      - name: Install dependencies
+        run: docker compose run --rm nts composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Run the unit suite
+        run: docker compose run --rm nts vendor/bin/phpunit --testsuite unit
