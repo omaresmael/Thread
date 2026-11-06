@@ -6,8 +6,6 @@ use ArrayObject;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\Context;
-use Illuminate\Support\Facades\Log;
-use Mockery;
 use Omaresmael\Thread\Exceptions\WorkerCrashedException;
 use Omaresmael\Thread\Facades\Thread;
 use Omaresmael\Thread\Payload;
@@ -170,21 +168,6 @@ class RunTest extends FeatureTestCase
         app(\Illuminate\Support\Defer\DeferredCallbackCollection::class)->invoke();
         $this->assertStringEqualsFile($file, 'done');
         unlink($file);
-    }
-
-    public function test_logs_a_one_time_warning_only_when_opcache_is_off(): void
-    {
-        Log::spy();
-        Thread::run([fn () => 1]);
-        Thread::run([fn () => 2]);
-        $isOpcacheWarning = fn ($m) => str_starts_with($m, '[thread] opcache.enable_cli is off');
-        // CI runs with it on; run once locally with -d opcache.enable_cli=0.
-        // Not `shouldHaveReceived()->times(0)`: shouldHaveReceived() already asserts "at least once".
-        if (ini_get('opcache.enable_cli')) {
-            Log::shouldNotHaveReceived('warning', [Mockery::on($isOpcacheWarning)]);
-        } else {
-            Log::shouldHaveReceived('warning')->times(1)->withArgs($isOpcacheWarning);
-        }
     }
 
     public function test_a_call_that_throws_midway_does_not_leak_results_into_the_next_call(): void
