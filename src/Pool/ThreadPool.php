@@ -24,8 +24,6 @@ use WeakReference;
  */
 final class ThreadPool
 {
-    public const OPCACHE_WARNING = '[thread] opcache.enable_cli is off: each thread compiles the app itself (~100 ms and ~19 MB per worker instead of ~9 ms and ~1.5 MB)';
-
     /** Start of the crash reason of every task a failed boot left without a worker. */
     public const BOOT_FAILURE = 'Worker failed to boot: ';
 
@@ -40,8 +38,6 @@ final class ThreadPool
 
     /** Error types that end a script (the ones Laravel's shutdown handler reports as fatal). */
     private const FATAL_ERRORS = E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_PARSE;
-
-    private static bool $warnedAboutOpcache = false;
 
     /** @var array<int, Worker> live workers by id */
     private array $workers = [];
@@ -262,8 +258,6 @@ final class ThreadPool
      */
     private function start(): Worker
     {
-        $this->warnIfOpcacheIsOff();
-
         $worker = new Worker(++$this->started, new Runtime($this->options->autoload));
         $worker->temporary = count($this->workers) >= $this->options->maxWorkers;
 
@@ -565,16 +559,5 @@ final class ThreadPool
                 unset($this->targets[$name]);
             }
         }
-    }
-
-    private function warnIfOpcacheIsOff(): void
-    {
-        if (self::$warnedAboutOpcache || (extension_loaded('Zend OPcache') && ini_get('opcache.enable_cli'))) {
-            return;
-        }
-
-        self::$warnedAboutOpcache = true;
-
-        $this->logger?->warning(self::OPCACHE_WARNING);
     }
 }
