@@ -140,6 +140,13 @@ class TimeoutTest extends FeatureTestCase
         $this->assertStringContainsString('abandoned thread; process exit will wait for it.', $process->errorOutput());
     }
 
+    public function test_no_timeout_means_no_time_limit_whatever_max_execution_time_is(): void
+    {
+        // tests/Fixtures/max-execution-time-subprocess.php: a fresh worker runs a 1.5 s task with no timeout under max_execution_time=1.
+        $process = Process::run([PHP_BINARY, '-d', 'max_execution_time=1', __DIR__.'/../Fixtures/max-execution-time-subprocess.php']);
+        $this->assertSame('done', $process->output());
+    }
+
     /**
      * One call before a timing is measured, so the timing covers the timeout
      * path, not a cold process loading classes on its first call.
