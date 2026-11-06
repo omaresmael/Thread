@@ -31,6 +31,10 @@ final class Bootstrap
     {
         $start = hrtime(true);
 
+        // A thread starts with php.ini's max_execution_time (30 s under a web server).
+        // Only a task's own timeout may limit it.
+        set_time_limit(0);
+
         // Fatals are recovered by the parent's post-mortem, not printed into its terminal.
         ini_set('display_errors', '0');
 
