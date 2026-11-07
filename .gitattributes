@@ -1,0 +1,10 @@
+# Left out of the package Composer installs (they stay in the repository).
+/.github export-ignore
+/art export-ignore
+/benchmark export-ignore
+/docker export-ignore
+/docker-compose.yml export-ignore
+/tests export-ignore
+/phpunit.xml export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
