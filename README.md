@@ -1,8 +1,13 @@
-# omaresmael/thread
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="art/logo-dark.svg">
+    <img alt="Thread" src="art/logo-light.svg" width="320">
+  </picture>
+</p>
 
-A thread-based concurrency driver for Laravel. Tasks run on a pool of PHP threads that boot your app once, so they’re far faster than the process driver (at least 77× on 500 database tasks) and use a fraction of its memory, without forking your app.
+A thread-based concurrency driver for Laravel. Tasks run on a pool of PHP threads that boot your app once, so they’re far faster than the process driver (at least 46× on a busy web server) and use a fraction of its memory, without forking your app.
 
-Laravel process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), 500 database tasks finish in **0.18 s** using **65 MB**, against **16.5 s** and **1.9 GB** with the process driver.
+Laravel process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), a request running 10 database queries under 50 concurrent clients answers in **0.5 s** with the server using **265 MB**, against **26 s** and **2.9 GB** with the process driver.
 
 Why threads instead of processes:
 
@@ -141,6 +146,7 @@ Thread::defer([fn () => Report::generate()]);
 
 - **Write tasks as you would for Laravel Octane.** Static properties and objects you mutate on shared singletons survive between tasks on the same worker. Set `max_tasks` to `1` if you need a fresh boot for every task.
 - **Threads share the process.** A crash of the PHP engine itself (a segfault) takes down your whole process. `putenv()` and `umask()` in a task affect the whole process.
+- **A timed-out task stuck in network I/O cannot be stopped.** `run()` throws on time, but the thread keeps running until the I/O returns, and closing the pool or exiting the process waits for it. Set timeouts on HTTP, database and socket calls inside tasks.
 - `STDIN`, `STDOUT` and `STDERR` do not exist inside tasks, and what a task `echo`s is discarded.
 
 ### Differences from the process driver
@@ -149,46 +155,26 @@ Results and task exceptions are the same: keys, order and rebuilt exceptions mat
 
 | | Process driver | Threads |
 |---|---|---|
-| Tasks running at once | all of them, one process each | up to `max_workers` (4 by default); the rest wait in a queue. Raise it or use `concurrent:` |
-| Config and `.env` | every task boots fresh from your files | workers keep the config they booted with; file changes need a restart of the process |
 | A task that times out | throws `ProcessTimedOutException` | throws `TaskTimedOutException`; a task stuck in network I/O keeps running in the background until that I/O returns |
 | A task that crashes | a generic exception with the exit code | `WorkerCrashedException` with the real error message, also reported to your exception handler |
 | `defer()` | starts detached background processes | runs the tasks on the pool, in your process, after the response is sent or the command finishes |
 
 ## Benchmark
 
-Laravel's process driver against the thread driver, called the same way (`Concurrency::driver('process')->run($tasks)` and `Concurrency::driver('thread')->run($tasks)`), at 10, 100 and 500 tasks. Times are the median of 5 runs, with the fastest and slowest run in brackets. "At least" divides the process driver's fastest run by the threads' slowest, so it holds even when the process driver is lucky; "typically" divides the medians.
+Laravel's process driver against the thread driver, with two tasks of about 34 ms each:
 
-### Database tasks
+- **I/O-bound:** a MySQL query that waits 30 ms on the server, like a slow query or an API call.
+- **CPU-bound:** a revenue report over 50,000 orders in SQLite.
 
-Each task loads one customer's 500 orders from SQLite with the query builder.
+| Where | Task | Workload | Process driver | Thread driver | Faster | Memory (process → thread) |
+|---|---|---|---:|---:|---:|---:|
+| Artisan command | CPU-bound | 100 tasks in one call | 4.63 s | 1.11 s | at least 3.6× (typically 4.2×) | 2,299 → 79 MB |
+| Artisan command | I/O-bound | 100 tasks in one call | 4.40 s | 827 ms | at least 4.8× (typically 5.3×) | 1,860 → 57 MB |
+| FrankenPHP classic mode | CPU-bound | 10 tasks per request, 50 clients | 33.1 s | 5.76 s | at least 4.1× (typically 5.8×) | 3,613 → 443 MB |
+| FrankenPHP classic mode | I/O-bound | 10 tasks per request, 10 clients | 6.09 s | 157 ms | at least 26× (typically 39×) | 2,719 → 180 MB |
+| FrankenPHP worker mode (Octane) | CPU-bound | 10 tasks per request, 10 clients | 6.87 s | 1.08 s | at least 5.6× (typically 6.4×) | 3,699 → 539 MB |
+| FrankenPHP worker mode (Octane) | I/O-bound | 10 tasks per request, 50 clients | 25.8 s | 496 ms | at least 46× (typically 52×) | 2,936 → 265 MB |
 
-![The thread driver against Laravel's process driver on database tasks, at 10, 100 and 500 tasks](art/benchmark-sqlite.gif)
+Times are the median of 5 runs: one `run()` call on the command line, one request on the web server. "At least" divides the process driver's fastest run by the threads' slowest; "typically" divides the medians. Both drivers ran on their defaults, in Docker with 5 CPUs.
 
-| Tasks | Process driver | Thread driver | Faster | Process driver memory | Thread driver memory | Less memory |
-|---:|---:|---:|---:|---:|---:|---:|
-| 10 | 492 ms (461–663 ms) | 39 ms (37–41 ms) | at least 11× (typically 13×) | 337 MB | 57 MB | at least 5× (typically 6×) |
-| 100 | 3.8 s (3.7–4.2 s) | 77 ms (71–82 ms) | at least 45× (typically 49×) | 1,846 MB | 63 MB | at least 29× (typically 29×) |
-| 500 | 16.5 s (15.4–18.3 s) | 176 ms (164–201 ms) | at least 77× (typically 93×) | 1,864 MB | 65 MB | at least 26× (typically 29×) |
-
-### Small tasks
-
-Each task returns `array_sum(range(1, 1000))`, so the numbers show the overhead each driver adds around your code.
-
-![The thread driver against Laravel's process driver on small tasks, at 10, 100 and 500 tasks](art/benchmark-small.gif)
-
-| Tasks | Process driver | Thread driver | Faster | Process driver memory | Thread driver memory | Less memory |
-|---:|---:|---:|---:|---:|---:|---:|
-| 10 | 436 ms (370–508 ms) | 23 ms (18–26 ms) | at least 14× (typically 19×) | 319 MB | 47 MB | at least 6× (typically 7×) |
-| 100 | 3.4 s (3.3–3.9 s) | 33 ms (33–35 ms) | at least 96× (typically 103×) | 1,575 MB | 47 MB | at least 32× (typically 34×) |
-| 500 | 15.4 s (14.2–16.3 s) | 82 ms (81–89 ms) | at least 159× (typically 187×) | 1,408 MB | 47 MB | at least 28× (typically 30×) |
-
-### How it was measured
-
-- A Laravel 13 app on Linux, PHP 8.4 ZTS with `parallel` 1.2.15, in Docker with 5 CPUs and the container capped at 6 GB of memory.
-- Time is one `run()` call in a fresh PHP process. For the thread driver that includes starting and booting its 4 workers; once they are running, the same calls take 3 ms, 34 ms and 113 ms (database tasks) and 2 ms, 13 ms and 61 ms (small tasks).
-- Both drivers use their defaults: the process driver starts every task as its own process at once, the thread driver runs 4 workers. The process driver ran with PHP's default `opcache.enable_cli=0`, which boots its child processes faster; the threads ran with it on, as recommended.
-- Memory is the peak combined memory (PSS) of every PHP process involved, sampled every 10 ms (the median is shown).
-- Each measurement had 1 warm-up round, which was discarded, and a 5 s pause before it. All 60 measured runs succeeded.
-
-To run it yourself, see [`benchmark/`](benchmark/README.md).
+Every result, the method, and how to run it yourself: [`benchmark/`](benchmark/README.md).
