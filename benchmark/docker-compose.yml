@@ -1,0 +1,80 @@
+# The benchmark environment. One image for every flow: FrankenPHP 1.13 / PHP 8.4 ZTS + ext-parallel (docker/Dockerfile).
+# Every container is memory-capped, so a driver that runs out of memory takes down only its own container (and the
+# benchmark records it), never the Docker engine. See README.md for the commands.
+name: thread-benchmark
+
+x-base: &base
+  image: thread-benchmark:frankenphp
+  build: ./docker
+  networks: [bench]
+  # The FrankenPHP image's health check polls the admin API every few seconds; it is not needed here (the runner polls
+  # the app itself) and would only add noise.
+  healthcheck:
+    disable: true
+
+x-server: &server
+  <<: *base
+  # The server's PHP, its thread workers and the process driver's child processes all count against this cap.
+  mem_limit: 5g
+  memswap_limit: 5g
+  volumes:
+    - ./app:/src:ro       # the Laravel app from setup.sh, copied to /app at start (serving it from the macOS
+    - .:/bench:ro         #   bind mount makes every PHP boot ~10x slower); the harness files are overlaid on it
+  working_dir: /app
+  stop_grace_period: 60s
+
+services:
+  # Setup and the command-line benchmark: a fresh PHP process per measurement.
+  cli:
+    <<: *base
+    mem_limit: 5g
+    memswap_limit: 5g
+    volumes:
+      - ..:/package
+    working_dir: /package/benchmark
+
+  # FrankenPHP classic mode: the image's own Caddyfile (php_server, no worker), FrankenPHP's default thread count.
+  classic:
+    <<: *server
+    command: ["sh", "-c", "sh /bench/prepare.sh && cd /app && exec frankenphp run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    environment:
+      SERVER_NAME: ":80"
+
+  # FrankenPHP worker mode through Laravel Octane, with Octane's defaults (--workers=auto, --max-requests=500).
+  worker:
+    <<: *server
+    command: ["sh", "-c", "sh /bench/prepare.sh && cd /app && exec php artisan octane:frankenphp --host=0.0.0.0 --port=80 --admin-port=2019"]
+
+  # The database the I/O-bound task waits on (TASK=wait): its own container, never published to the host. Data lives
+  # in memory (tmpfs) and is loaded from data/orders.sql on every start. max_connections is raised from MySQL's default
+  # 151 so the benchmark measures the drivers, not that limit (the process driver opens one connection per task);
+  # performance_schema is off and the buffer pool small (the data is ~10 MB) to leave memory for the connections.
+  mysql:
+    image: mysql/mysql-server:8.0
+    command: ["--max-connections=1000", "--skip-log-bin", "--performance-schema=OFF", "--innodb-buffer-pool-size=64M"]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: bench
+      MYSQL_USER: bench
+      MYSQL_PASSWORD: bench
+    volumes:
+      - ./data:/bench-data:ro
+      - ./docker/mysql-init.sh:/docker-entrypoint-initdb.d/orders.sh:ro
+    tmpfs:
+      - /var/lib/mysql
+    networks: [bench]
+    mem_limit: 1g
+    memswap_limit: 1g
+
+  # The load client: its own container on the same network.
+  load:
+    <<: *base
+    mem_limit: 512m
+    memswap_limit: 512m
+    volumes:
+      - .:/bench
+    working_dir: /bench
+    command: ["sleep", "infinity"]
+
+networks:
+  bench: {}
