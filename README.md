@@ -48,7 +48,7 @@ Thread::run([
 ]);
 ```
 
-Or as a driver of Laravel's `Concurrency` facade, so existing code switches to threads without changes. Make it the default in `.env`:
+Or as a driver of Laravel's `Concurrency` facade. Make it the default in `.env`:
 
 ```dotenv
 CONCURRENCY_DRIVER=thread
@@ -171,9 +171,9 @@ Laravel's process driver against the thread driver, with two tasks of about 34 m
 | Artisan command | CPU-bound | 100 tasks in one call | 4.63 s | 1.11 s | at least 3.6× (typically 4.2×) | 2,299 → 79 MB |
 | Artisan command | I/O-bound | 100 tasks in one call | 4.40 s | 827 ms | at least 4.8× (typically 5.3×) | 1,860 → 57 MB |
 | FrankenPHP classic mode | CPU-bound | 10 tasks per request, 50 clients | 33.1 s | 5.76 s | at least 4.1× (typically 5.8×) | 3,613 → 443 MB |
-| FrankenPHP classic mode | I/O-bound | 10 tasks per request, 10 clients | 6.09 s | 157 ms | at least 26× (typically 39×) | 2,719 → 180 MB |
+| FrankenPHP classic mode | I/O-bound | 10 tasks per request, 10 clients | 6.09 s | 157 ms | at least **26×** (typically 39×) | 2,719 → 180 MB |
 | FrankenPHP worker mode (Octane) | CPU-bound | 10 tasks per request, 10 clients | 6.87 s | 1.08 s | at least 5.6× (typically 6.4×) | 3,699 → 539 MB |
-| FrankenPHP worker mode (Octane) | I/O-bound | 10 tasks per request, 50 clients | 25.8 s | 496 ms | at least 46× (typically 52×) | 2,936 → 265 MB |
+| FrankenPHP worker mode (Octane) | I/O-bound | 10 tasks per request, 50 clients | 25.8 s | 496 ms | at least **46×** (typically 52×) | 2,936 → 265 MB |
 
 Times are the median of 5 runs: one `run()` call on the command line, one request on the web server. "At least" divides the process driver's fastest run by the threads' slowest; "typically" divides the medians. Both drivers ran on their defaults, in Docker with 5 CPUs.
 
