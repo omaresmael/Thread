@@ -5,6 +5,11 @@
   </picture>
 </p>
 
+<p align="center">
+<a href="https://github.com/omaresmael/Thread/actions/workflows/tests.yml"><img src="https://github.com/omaresmael/Thread/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+<a href="https://packagist.org/packages/omaresmael/thread"><img src="https://img.shields.io/packagist/v/omaresmael/thread" alt="Latest Stable Version"></a>
+</p>
+
 A thread-based concurrency driver for Laravel. Tasks run on a pool of PHP threads that boot your app once, so they’re far faster than the process driver (at least 46× on a busy web server) and use a fraction of its memory, without forking your app.
 
 Laravel process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), a request running 10 database queries under 50 concurrent clients answers in **0.5 s** with the server using **265 MB**, against **26 s** and **2.9 GB** with the process driver.
