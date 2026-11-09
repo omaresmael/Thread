@@ -12,12 +12,12 @@
 
 A thread-based concurrency driver for Laravel. Tasks run on a pool of PHP threads that boot your app once, so they’re far faster than the process driver (at least 46× on a busy web server) and use a fraction of its memory, without forking your app.
 
-Laravel process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs microseconds of overhead instead of hundreds of milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), a request running 10 database queries under 50 concurrent clients answers in **0.5 s** with the server using **265 MB**, against **26 s** and **2.9 GB** with the process driver.
+Laravel's process driver starts a new `php artisan` process for every task: a process spawn, PHP startup and a full Laravel boot before your code runs, and a whole PHP process in memory per task. This package keeps a small pool of threads inside your PHP process instead. Each thread boots Laravel once and then runs task after task, so a task costs under a millisecond of overhead instead of over a hundred milliseconds, and the pool's memory stays flat no matter how many tasks you run. On the [benchmark](#benchmark), a request running 10 database queries under 50 concurrent clients answers in **0.5 s** with the server using **265 MB**, against **26 s** and **2.9 GB** with the process driver.
 
 Why threads instead of processes:
 
 - **Lighter.** A thread is not a whole new PHP process: there is no process to spawn and no PHP to start, and a booted worker adds about 1.5 MB, against roughly 30 MB for every process the process driver starts.
-- **Shares opcache.** All the threads live in one process, so they share its opcache: code PHP has compiled once is reused by every worker, which is why a worker boots in about 10 ms. Each process the process driver starts has its own opcache, so it compiles your app all over again.
+- **Shares opcache.** All the threads live in one process, so they share its opcache: code PHP has compiled once is reused by every worker, which is why a worker boots in about 10 ms. Each process the process driver starts gets no shared opcache, so it compiles your app all over again.
 
 
 ## Installation
@@ -99,7 +99,7 @@ Thread::run([
 
 Every task finishes before `run()` throws. If tasks failed, the first failure in key order is thrown:
 
-- a task's exception is rebuilt with its original class and constructor arguments;
+- a task's exception is rebuilt with its original class and constructor arguments; one that can't be rebuilt that way (its constructor needs objects, like `ValidationException`) is thrown as a `RuntimeException` carrying its class and message;
 - a task that runs past its timeout throws `TaskTimedOutException`;
 - a task that kills its worker (a fatal error, out of memory, `exit()`) throws `WorkerCrashedException` with the real error message. The crash is also reported to your exception handler.
 
@@ -156,13 +156,14 @@ Thread::defer([fn () => Report::generate()]);
 
 ### Differences from the process driver
 
-Results and task exceptions are the same: keys, order and rebuilt exceptions match Laravel's process driver. What differs:
+Results and most task exceptions are the same: keys, order and rebuilt exceptions match Laravel's process driver. What differs:
 
 | | Process driver | Threads |
 |---|---|---|
 | A task that times out | throws `ProcessTimedOutException` | throws `TaskTimedOutException`; a task stuck in network I/O keeps running in the background until that I/O returns |
-| A task that crashes | a generic exception with the exit code | `WorkerCrashedException` with the real error message, also reported to your exception handler |
-| `defer()` | starts detached background processes | runs the tasks on the pool, in your process, after the response is sent or the command finishes |
+| A task that crashes | a plain `Exception` with the exit code and the child's error output (empty for `exit()`) | `WorkerCrashedException` with the real error message, also for `exit()`, and reported to your exception handler |
+| An exception that can't be rebuilt (e.g. `ValidationException`) | rebuilding it fails with an unrelated `Error` | `RuntimeException` carrying the original class and message |
+| `defer()` | starts detached background processes and returns at once | runs the tasks on the pool after the HTTP response is sent, or after the command or queued job finishes; that PHP worker stays busy until they are done |
 
 ## Benchmark
 
