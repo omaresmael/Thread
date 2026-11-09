@@ -118,22 +118,24 @@ if (! $web) {
         .(($w = median($values('thread', $c, 'warm_seconds'))) === null ? '–' : $seconds($w)), $cells)).".\n";
 } else {
     foreach (['p50_ms' => ['p50 latency (median of the runs\' p50)', $ms, true],
-        'p95_ms' => ['p95 latency (median of the runs\' p95)', $ms, true],
         'rps' => ['Requests per second', $rps, false]] as $key => [$title, $format, $lower]) {
         echo "### {$title}\n\n";
         $table(['Tasks', 'Clients', 'thread', 'process', 'thread vs process'],
             array_map(fn ($c) => [$c[0], $c[1], $show('thread', $c, $key, $format),
                 $show('process', $c, $key, $format), $ratio('process', $c, $key, $lower)], $cells));
     }
-    echo "### Errors (failed requests, all measured runs) and peak server memory (median, lowest–highest)\n\n";
-    $errors = fn (string $d, array $c) => (string) array_sum(array_map(fn ($r) => (int) ($r['errors'] ?? 0), $runs($d, $c)));
-    $table(['Tasks', 'Clients', 'thread errors', 'process errors', 'thread memory', 'process memory', 'thread vs process'],
-        array_map(fn ($c) => [$c[0], $c[1], $errors('thread', $c), $errors('process', $c),
-            $show('thread', $c, 'peak_mb', $mb), $show('process', $c, 'peak_mb', $mb),
-            $ratio('process', $c, 'peak_mb', true, 'less', 'more')], $cells));
 }
 
-echo "\"!\" = at least one run failed: not a clean result, no ratio. typically = medians; at least = the other driver's best run ÷ the thread driver's worst.\n";
+// The "!" key, only when a cell carries one.
+$marked = false;
+foreach ($cells as $cell) {
+    foreach (DRIVERS as $driver) {
+        $marked = $marked || ! $clean($driver, $cell);
+    }
+}
+if ($marked) {
+    echo "\"!\" = at least one of the cell's runs failed: its median is from the runs that succeeded, and it gets no ratio.\n";
+}
 
 $failed = array_filter($rows, fn ($row) => $row['ok'] !== true);
 foreach ($cells as $cell) {
