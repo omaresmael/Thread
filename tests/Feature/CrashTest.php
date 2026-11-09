@@ -61,7 +61,8 @@ class CrashTest extends FeatureTestCase
             unlink($log);
         }
         // A real app's handler would log the fatal and render it to the console when the thread shuts down.
-        $process = new Process([PHP_BINARY, __DIR__.'/../Fixtures/oom-subprocess.php']);
+        // log_errors=1, as in php.ini-development and php.ini-production: on the CLI, PHP logs errors to stderr.
+        $process = new Process([PHP_BINARY, '-d', 'log_errors=1', __DIR__.'/../Fixtures/oom-subprocess.php']);
         $process->mustRun();
         $this->assertMatchesRegularExpression('/^Crash: Allowed memory size of \d+ bytes exhausted \(tried to allocate \d+ bytes\)$/', $process->getOutput());
         $this->assertSame('', $process->getErrorOutput());

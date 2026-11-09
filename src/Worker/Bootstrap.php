@@ -37,6 +37,7 @@ final class Bootstrap
 
         // Fatals are recovered by the parent's post-mortem, not printed into its terminal.
         ini_set('display_errors', '0');
+        ini_set('log_errors', '0');
 
         $app = require $appFile;
         $app->make(Kernel::class)->bootstrap();
