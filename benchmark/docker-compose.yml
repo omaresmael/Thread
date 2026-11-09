@@ -1,14 +1,11 @@
 # The benchmark environment. One image for every flow: FrankenPHP 1.13 / PHP 8.4 ZTS + ext-parallel (docker/Dockerfile).
-# Every container is memory-capped, so a driver that runs out of memory takes down only its own container (and the
-# benchmark records it), never the Docker engine. See README.md for the commands.
+
 name: thread-benchmark
 
 x-base: &base
   image: thread-benchmark:frankenphp
   build: ./docker
   networks: [bench]
-  # The FrankenPHP image's health check polls the admin API every few seconds; it is not needed here (the runner polls
-  # the app itself) and would only add noise.
   healthcheck:
     disable: true
 
