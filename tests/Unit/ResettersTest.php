@@ -334,6 +334,40 @@ class ResettersTest extends TestCase
         $this->assertSame($this->app, Container::getInstance());
     }
 
+    public function test_state_left_by_a_task_that_throws_does_not_carry_over(): void
+    {
+        $this->app->scoped('counter', fn () => new stdClass);
+
+        // The resetters must also run when a task throws: none of this may reach the next task.
+        $out = Payload::decode(TaskRunner::handle(Payload::task(function () {
+            app('counter')->n = 9;
+            Auth::setUser(new GenericUser(['id' => 1]));
+            app()->setLocale('fr');
+            Context::add('x', 1);
+            Log::shareContext(['shared' => 1]);
+            config(['app.x' => 1]);
+            DB::beginTransaction();
+            DB::table('t')->insert(['v' => 1]);
+
+            throw new RuntimeException('failed halfway');
+        })));
+
+        $this->assertFalse($out['successful']);
+        $this->assertSame(
+            ['counter' => false, 'user' => false, 'locale' => 'en', 'context' => false, 'log' => [], 'config' => null, 'transaction' => 0, 'rows' => 0],
+            $this->task(fn () => [
+                'counter' => isset(app('counter')->n),
+                'user' => Auth::hasUser(),
+                'locale' => app()->getLocale(),
+                'context' => Context::has('x'),
+                'log' => Log::sharedContext(),
+                'config' => config('app.x'),
+                'transaction' => DB::transactionLevel(),
+                'rows' => DB::table('t')->count(),
+            ]),
+        );
+    }
+
     public function test_a_failure_while_entering_the_sandbox_restores_the_base(): void
     {
         $this->app->make('cache');
